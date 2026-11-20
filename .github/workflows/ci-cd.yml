@@ -1,0 +1,165 @@
+# Pipeline DevSecOps de CicloSeguro Lima.
+# Es "escalonado": cada etapa depende de la anterior (needs), y GitHub Actions lo dibuja como un grafo:
+#   1) Build  ->  2) Pruebas + Seguridad (SAST, secretos, dependencias) en paralelo  ->  3) Deploy  ->  4) Smoke test
+# Si una prueba o un control de seguridad falla, el despliegue NO se ejecuta.
+name: CI-CD DevSecOps
+
+on:
+  push:
+    branches: [main, test]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  # ---------------- ETAPA 1: BUILD ----------------
+  build:
+    name: "1. Build"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Compilar y empaquetar (node --check + dist/)
+        run: npm run build
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          include-hidden-files: true
+          retention-days: 7
+
+  # ---------------- ETAPA 2: PRUEBAS ----------------
+  test:
+    name: "2a. Pruebas unitarias e integración"
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Ejecutar tests (node:test)
+        run: npm run test:report | tee test-output.txt
+      - name: Publicar resumen de resultados
+        if: always()
+        run: |
+          {
+            echo "## Resultados de pruebas"
+            echo '```'
+            grep -E "^ℹ (tests|suites|pass|fail|duration_ms)" test-output.txt || tail -n 12 test-output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results.xml
+
+  # ---------------- ETAPA 2: SEGURIDAD (en paralelo con las pruebas) ----------------
+  sast:
+    name: "2b. SAST (CodeQL)"
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript"
+
+  secrets:
+    name: "2c. Escaneo de secretos (Gitleaks)"
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # revisa todo el historial de commits
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependencies:
+    name: "2d. Dependencias y configuración (Trivy)"
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy - vulnerabilidades, secretos y malas configuraciones
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          format: table
+
+  # ---------------- ETAPA 3: DEPLOY (solo main) ----------------
+  deploy:
+    name: "3. Deploy a GitHub Pages"
+    needs: [test, sast, secrets, dependencies]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ---------------- ETAPA 4: VERIFICACIÓN EN PRODUCCIÓN ----------------
+  smoke:
+    name: "4. Smoke test en producción"
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar que el sitio responde con HTTPS
+        run: |
+          URL="${{ needs.deploy.outputs.page_url || format('https://{0}.github.io/{1}/', github.repository_owner, github.event.repository.name) }}"
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o page.html -w "%{http_code}" "$URL") || true
+            if [ "$code" = "200" ] && grep -q "CicloSeguro" page.html; then
+              echo "OK: $URL respondió 200"; echo "Sitio en línea: $URL" >> "$GITHUB_STEP_SUMMARY"; exit 0
+            fi
+            echo "Intento $i: código $code, reintentando..."; sleep 10
+          done
+          exit 1
