@@ -3,9 +3,9 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  haversine, distanceToPolyline, isValidEmail, isValidPassword, validateSignup, escapeHtml,
+  haversine, distanceToPolyline, routeScore, classify, recommendRoutes, filterByDistrict, isValidEmail, isValidPassword, validateSignup, escapeHtml,
 } from "../src/core.js";
-
+import { DEMO_ROUTES, demoIncidents } from "../src/data/demo.js";
 
 const NOW = new Date("2026-11-20T12:00:00Z");
 const daysAgo = (d) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
@@ -18,6 +18,46 @@ describe("Geometría", () => {
   });
   test("distancia a polilínea: punto sobre la ruta es ~0 m", () => {
     assert.ok(distanceToPolyline({ lat: -12.105, lng: -77.03 }, route.coords) < 1);
+  });
+});
+
+describe("US-02 Semáforo de seguridad", () => {
+  test("≥75 verde, 50-74 amarillo, <50 rojo", () => {
+    assert.equal(classify(75), "verde");
+    assert.equal(classify(74), "amarillo");
+    assert.equal(classify(50), "amarillo");
+    assert.equal(classify(49), "rojo");
+  });
+  test("ruta segregada en buen estado y sin incidentes = 95", () => {
+    assert.equal(routeScore(route, [], NOW), 95);
+  });
+  test("el estado del tramo baja el puntaje", () => {
+    assert.ok(routeScore({ ...route, condition: "malo" }, [], NOW) < routeScore(route, [], NOW));
+  });
+});
+
+describe("US-03 Ruta más segura entre distritos", () => {
+  test("ordena de mayor a menor puntaje", () => {
+    const res = recommendRoutes(DEMO_ROUTES, demoIncidents(NOW), "Miraflores", "San Isidro", NOW);
+    assert.ok(res.length >= 1);
+    for (let i = 1; i < res.length; i++) assert.ok(res[i - 1].score >= res[i].score);
+    assert.ok(res.every((r) => r.districts.includes("Miraflores") && r.districts.includes("San Isidro")));
+  });
+  test("sin rutas que conecten devuelve lista vacía", () => {
+    assert.deepEqual(recommendRoutes(DEMO_ROUTES, [], "Barranco", "San Borja", NOW), []);
+  });
+  test("origen igual al destino devuelve lista vacía", () => {
+    assert.deepEqual(recommendRoutes(DEMO_ROUTES, [], "Miraflores", "Miraflores", NOW), []);
+  });
+});
+
+describe("US-05 Filtro por distrito", () => {
+  test("Barranco solo devuelve rutas que pasan por Barranco", () => {
+    const res = filterByDistrict(DEMO_ROUTES, "Barranco");
+    assert.ok(res.length > 0 && res.every((r) => r.districts.includes("Barranco")));
+  });
+  test("'Todos' devuelve todas", () => {
+    assert.equal(filterByDistrict(DEMO_ROUTES, "").length, DEMO_ROUTES.length);
   });
 });
 
