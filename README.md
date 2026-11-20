@@ -2,7 +2,8 @@
 
 Aplicación web para ciclistas de Lima: muestra las ciclovías con un **semáforo de seguridad**, recomienda la **ruta más segura** entre distritos, permite **reportar incidentes** (robos, accidentes, invasión de ciclovía, tramos en mal estado) y encontrar **estacionamientos seguros**.
 
-- **Solución desplegada:** https://rossylv.github.io/ciclo-seguro-lima/
+- **Solución desplegada (Vercel):** se publica automáticamente en cada merge a `main`
+- **Espejo (GitHub Pages):** https://rossylv.github.io/ciclo-seguro-lima/
 - **Pipeline:** pestaña *Actions* → workflow **CI-CD DevSecOps**
 
 ## Arquitectura
@@ -14,7 +15,7 @@ Aplicación web para ciclistas de Lima: muestra las ciclovías con un **semáfor
 | Backend como servicio | Supabase (API REST autogenerada) | Lectura y escritura de datos vía HTTPS |
 | Base de datos | PostgreSQL (Supabase) con Row Level Security | Rutas, incidentes, confirmaciones, estacionamientos, calificaciones |
 | Autenticación | Supabase Auth (correo + contraseña, JWT) | Registro e inicio de sesión |
-| Hosting | GitHub Pages (CDN con HTTPS) | Publica el sitio estático |
+| Hosting | Vercel (CDN con HTTPS, cabeceras de seguridad) + GitHub Pages | Publica el sitio estático |
 
 ## Ramas
 
