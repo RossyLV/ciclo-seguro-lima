@@ -1,7 +1,18 @@
 // Lógica de negocio de CicloSeguro Lima: funciones puras (sin DOM ni red) para poder probarlas.
 
+export const INCIDENT_TYPES = ["robo", "accidente", "invasion", "mal_estado"];
+export const INCIDENT_LABELS = { robo: "Robo", accidente: "Accidente", invasion: "Invasión de ciclovía", mal_estado: "Tramo en mal estado" };
+// Gravedad: cuántos puntos resta cada tipo de incidente al puntaje de seguridad de una ruta.
+export const INCIDENT_WEIGHT = { robo: 15, accidente: 12, invasion: 6, mal_estado: 5 };
+// Caja geográfica aproximada de Lima Metropolitana (valida que el reporte esté en Lima).
+export const LIMA_BOUNDS = { minLat: -12.30, maxLat: -11.75, minLng: -77.20, maxLng: -76.80 };
 export const LANE_BASE = { segregada: 95, senalizada: 78, compartida: 62 };
 export const CONDITION_PENALTY = { bueno: 0, regular: 8, malo: 20, invadido: 15 };
+export const NEAR_METERS = 150;       // radio en que un incidente afecta a una ruta
+export const MAX_INCIDENT_AGE_DAYS = 30; // incidentes "recientes"
+export const MAX_INCIDENT_PENALTY = 60;
+
+const DAY_MS = 86_400_000;
 
 /** Escapa texto para insertarlo como HTML (evita XSS con descripciones escritas por usuarios). */
 export function escapeHtml(value) {
@@ -41,12 +52,47 @@ export function isValidEmail(email) {
   return typeof email === "string" && email.length <= 254 && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]{2,}$/.test(email.trim());
 }
 
-/** Puntaje de seguridad 0-100 de una ruta según tipo de vía y estado del tramo (US-02).
- *  Los incidentes se incorporarán en el Sprint 3 (US-08). */
-export function routeScore(route, _incidents = [], _now = new Date()) {
+/** Valida un reporte antes de enviarlo. Devuelve { ok, errors, clean }. */
+export function validateReport(report) {
+  const errors = [];
+  const r = report ?? {};
+  if (!INCIDENT_TYPES.includes(r.type)) errors.push("Elige un tipo de incidente válido.");
+  const lat = Number(r.lat), lng = Number(r.lng);
+  const inLima = Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat >= LIMA_BOUNDS.minLat && lat <= LIMA_BOUNDS.maxLat && lng >= LIMA_BOUNDS.minLng && lng <= LIMA_BOUNDS.maxLng;
+  if (!inLima) errors.push("La ubicación debe estar dentro de Lima.");
+  const description = String(r.description ?? "").trim();
+  if (description.length < 10 || description.length > 300) errors.push("La descripción debe tener entre 10 y 300 caracteres.");
+  return { ok: errors.length === 0, errors, clean: { type: r.type, lat, lng, description } };
+}
+
+/** Incidentes publicados de los últimos `days` días. */
+export function recentIncidents(incidents, now = new Date(), days = MAX_INCIDENT_AGE_DAYS) {
+  return incidents.filter((i) => {
+    if (i.status && i.status !== "publicado") return false;
+    const age = (now - new Date(i.created_at)) / DAY_MS;
+    return age >= 0 && age <= days;
+  });
+}
+
+/** Peso por antigüedad: 1 si es de hoy y baja linealmente hasta 0.3 a los 30 días. */
+export function recencyFactor(createdAt, now = new Date()) {
+  const age = Math.max(0, (now - new Date(createdAt)) / DAY_MS);
+  return Math.max(0.3, 1 - (age / MAX_INCIDENT_AGE_DAYS) * 0.7);
+}
+
+/** Puntaje de seguridad 0-100 de una ruta (US-02, US-08). */
+export function routeScore(route, incidents, now = new Date()) {
   const base = LANE_BASE[route.lane_type] ?? 60;
   const conditionPenalty = CONDITION_PENALTY[route.condition] ?? 0;
-  return Math.max(0, Math.min(100, Math.round(base - conditionPenalty)));
+  let incidentPenalty = 0;
+  for (const inc of recentIncidents(incidents, now)) {
+    if (distanceToPolyline({ lat: inc.lat, lng: inc.lng }, route.coords) <= NEAR_METERS) {
+      incidentPenalty += (INCIDENT_WEIGHT[inc.type] ?? 0) * recencyFactor(inc.created_at, now) * (1 + Math.min(inc.confirmations ?? 0, 5) * 0.1);
+    }
+  }
+  incidentPenalty = Math.min(incidentPenalty, MAX_INCIDENT_PENALTY);
+  return Math.max(0, Math.min(100, Math.round(base - conditionPenalty - incidentPenalty)));
 }
 
 /** Color semáforo según el puntaje. */

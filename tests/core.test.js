@@ -3,7 +3,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  haversine, distanceToPolyline, routeScore, classify, recommendRoutes, filterByDistrict, isValidEmail, isValidPassword, validateSignup, escapeHtml,
+  haversine, distanceToPolyline, routeScore, classify, recommendRoutes, recentIncidents, recencyFactor, filterByDistrict, validateReport, isValidEmail, isValidPassword, validateSignup, escapeHtml,
 } from "../src/core.js";
 import { DEMO_ROUTES, demoIncidents } from "../src/data/demo.js";
 
@@ -36,6 +36,33 @@ describe("US-02 Semáforo de seguridad", () => {
   });
 });
 
+describe("US-08 Puntaje con incidentes recientes", () => {
+  const robo = { type: "robo", lat: -12.105, lng: -77.0301, created_at: daysAgo(1), status: "publicado", confirmations: 0 };
+  test("un robo reciente a menos de 150 m baja el puntaje", () => {
+    assert.ok(routeScore(route, [robo], NOW) < routeScore(route, [], NOW));
+  });
+  test("un incidente de más de 30 días no afecta", () => {
+    assert.equal(routeScore(route, [{ ...robo, created_at: daysAgo(45) }], NOW), 95);
+  });
+  test("un incidente lejano (>150 m) no afecta", () => {
+    assert.equal(routeScore(route, [{ ...robo, lng: -77.04 }], NOW), 95);
+  });
+  test("los incidentes ocultos (moderados) no afectan", () => {
+    assert.equal(routeScore(route, [{ ...robo, status: "oculto" }], NOW), 95);
+  });
+  test("más confirmaciones = más penalización", () => {
+    assert.ok(routeScore(route, [{ ...robo, confirmations: 5 }], NOW) < routeScore(route, [robo], NOW));
+  });
+  test("el factor de antigüedad baja de 1 a 0,3", () => {
+    assert.equal(recencyFactor(daysAgo(0), NOW), 1);
+    assert.ok(Math.abs(recencyFactor(daysAgo(30), NOW) - 0.3) < 1e-9);
+  });
+  test("el puntaje nunca es menor que 0", () => {
+    const many = Array.from({ length: 20 }, () => robo);
+    assert.ok(routeScore({ ...route, lane_type: "compartida", condition: "malo" }, many, NOW) >= 0);
+  });
+});
+
 describe("US-03 Ruta más segura entre distritos", () => {
   test("ordena de mayor a menor puntaje", () => {
     const res = recommendRoutes(DEMO_ROUTES, demoIncidents(NOW), "Miraflores", "San Isidro", NOW);
@@ -58,6 +85,27 @@ describe("US-05 Filtro por distrito", () => {
   });
   test("'Todos' devuelve todas", () => {
     assert.equal(filterByDistrict(DEMO_ROUTES, "").length, DEMO_ROUTES.length);
+  });
+});
+
+describe("US-06 Validación de reportes", () => {
+  const ok = { type: "robo", lat: -12.12, lng: -77.03, description: "Me robaron el celular en la ciclovía" };
+  test("reporte válido", () => assert.equal(validateReport(ok).ok, true));
+  test("ubicación fuera de Lima es rechazada", () => {
+    assert.equal(validateReport({ ...ok, lat: -13.5 }).ok, false);
+  });
+  test("descripción muy corta es rechazada", () => {
+    assert.equal(validateReport({ ...ok, description: "corto" }).ok, false);
+  });
+  test("tipo inválido es rechazado", () => {
+    assert.equal(validateReport({ ...ok, type: "otro" }).ok, false);
+  });
+});
+
+describe("US-07 Incidentes recientes", () => {
+  test("muestra el de hace 3 días y oculta el de hace 45", () => {
+    const list = recentIncidents([{ id: 1, created_at: daysAgo(3) }, { id: 2, created_at: daysAgo(45) }], NOW);
+    assert.deepEqual(list.map((i) => i.id), [1]);
   });
 });
 
