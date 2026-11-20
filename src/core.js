@@ -4,8 +4,10 @@ export const INCIDENT_TYPES = ["robo", "accidente", "invasion", "mal_estado"];
 export const INCIDENT_LABELS = { robo: "Robo", accidente: "Accidente", invasion: "Invasión de ciclovía", mal_estado: "Tramo en mal estado" };
 // Gravedad: cuántos puntos resta cada tipo de incidente al puntaje de seguridad de una ruta.
 export const INCIDENT_WEIGHT = { robo: 15, accidente: 12, invasion: 6, mal_estado: 5 };
+
 // Caja geográfica aproximada de Lima Metropolitana (valida que el reporte esté en Lima).
 export const LIMA_BOUNDS = { minLat: -12.30, maxLat: -11.75, minLng: -77.20, maxLng: -76.80 };
+
 export const LANE_BASE = { segregada: 95, senalizada: 78, compartida: 62 };
 export const CONDITION_PENALTY = { bueno: 0, regular: 8, malo: 20, invadido: 15 };
 export const NEAR_METERS = 150;       // radio en que un incidente afecta a una ruta
@@ -112,6 +114,39 @@ export function recommendRoutes(routes, incidents, origin, destination, now = ne
     .sort((a, b) => b.score - a.score);
 }
 
+/** Estacionamientos más cercanos a un punto, con distancia en metros (US-11). */
+export function nearestParkings(parkings, point, limit = 5) {
+  return parkings
+    .map((p) => ({ ...p, distance: Math.round(haversine(point, { lat: p.lat, lng: p.lng })) }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, limit);
+}
+
+/** Promedio de calificaciones 1-5 (US-13). Devuelve null si no hay. */
+export function averageRating(stars) {
+  const valid = stars.filter((s) => Number.isInteger(s) && s >= 1 && s <= 5);
+  if (valid.length === 0) return null;
+  return Math.round((valid.reduce((a, b) => a + b, 0) / valid.length) * 10) / 10;
+}
+
+export function isValidRating(stars) {
+  return Number.isInteger(stars) && stars >= 1 && stars <= 5;
+}
+
+/** Totales de incidentes por distrito y tipo, de mayor a menor (US-19). */
+export function statsByDistrict(incidents) {
+  const map = new Map();
+  for (const inc of incidents) {
+    if (inc.status && inc.status !== "publicado") continue;
+    const d = inc.district || "Sin distrito";
+    const row = map.get(d) ?? { district: d, total: 0, byType: {} };
+    row.total += 1;
+    row.byType[inc.type] = (row.byType[inc.type] ?? 0) + 1;
+    map.set(d, row);
+  }
+  return [...map.values()].sort((a, b) => b.total - a.total || a.district.localeCompare(b.district));
+}
+
 /** Filtra rutas por distrito (US-05). "" o null devuelve todas. */
 export function filterByDistrict(routes, district) {
   return district ? routes.filter((r) => r.districts.includes(district)) : routes;
@@ -128,4 +163,13 @@ export function validateSignup(email, password) {
   if (!isValidEmail(email)) errors.push("Correo no válido.");
   if (!isValidPassword(password)) errors.push("La contraseña debe tener al menos 8 caracteres, con letras y números.");
   return errors;
+}
+
+/** Agrega una confirmación de un usuario a un incidente; una sola por usuario (US-09). */
+export function addConfirmation(confirmedBy, userId) {
+  const set = new Set(confirmedBy ?? []);
+  if (!userId) return { added: false, confirmedBy: [...set] };
+  const added = !set.has(userId);
+  set.add(userId);
+  return { added, confirmedBy: [...set] };
 }

@@ -3,9 +3,11 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  haversine, distanceToPolyline, routeScore, classify, recommendRoutes, recentIncidents, recencyFactor, filterByDistrict, validateReport, isValidEmail, isValidPassword, validateSignup, escapeHtml,
+  haversine, distanceToPolyline, routeScore, classify, recommendRoutes, recentIncidents, recencyFactor,
+  nearestParkings, averageRating, isValidRating, statsByDistrict, filterByDistrict, validateReport,
+  isValidEmail, isValidPassword, validateSignup, addConfirmation, escapeHtml,
 } from "../src/core.js";
-import { DEMO_ROUTES, demoIncidents } from "../src/data/demo.js";
+import { DEMO_ROUTES, DEMO_PARKINGS, demoIncidents } from "../src/data/demo.js";
 
 const NOW = new Date("2026-11-20T12:00:00Z");
 const daysAgo = (d) => new Date(NOW.getTime() - d * 86_400_000).toISOString();
@@ -109,6 +111,38 @@ describe("US-07 Incidentes recientes", () => {
   });
 });
 
+describe("US-09 Confirmar incidente", () => {
+  test("la primera confirmación suma", () => {
+    const r = addConfirmation([], "u1");
+    assert.equal(r.added, true);
+    assert.equal(r.confirmedBy.length, 1);
+  });
+  test("el mismo usuario no puede confirmar dos veces", () => {
+    const r = addConfirmation(["u1"], "u1");
+    assert.equal(r.added, false);
+    assert.equal(r.confirmedBy.length, 1);
+  });
+});
+
+describe("US-11 / US-12 / US-13 Estacionamientos", () => {
+  test("devuelve los 5 más cercanos ordenados por distancia", () => {
+    const res = nearestParkings(DEMO_PARKINGS, { lat: -12.1219, lng: -77.0297 }, 5);
+    assert.equal(res.length, 5);
+    assert.equal(res[0].name, "Parque Kennedy (zona vigilada)");
+    for (let i = 1; i < res.length; i++) assert.ok(res[i - 1].distance <= res[i].distance);
+  });
+  test("promedio de calificaciones", () => {
+    assert.equal(averageRating([5, 4, 4]), 4.3);
+    assert.equal(averageRating([]), null);
+  });
+  test("solo se aceptan calificaciones de 1 a 5", () => {
+    assert.equal(isValidRating(4), true);
+    assert.equal(isValidRating(0), false);
+    assert.equal(isValidRating(6), false);
+    assert.equal(isValidRating(3.5), false);
+  });
+});
+
 describe("US-15 Registro", () => {
   test("correo válido / inválido", () => {
     assert.equal(isValidEmail("ciclista@correo.pe"), true);
@@ -121,6 +155,15 @@ describe("US-15 Registro", () => {
   });
   test("correo inválido muestra 'Correo no válido.'", () => {
     assert.ok(validateSignup("malo", "bici2026").includes("Correo no válido."));
+  });
+});
+
+describe("US-19 Estadísticas por distrito", () => {
+  test("agrupa por distrito y tipo, ordenado de mayor a menor", () => {
+    const stats = statsByDistrict(demoIncidents(NOW));
+    assert.equal(stats[0].district, "Miraflores");
+    assert.equal(stats[0].byType.robo, 2);
+    for (let i = 1; i < stats.length; i++) assert.ok(stats[i - 1].total >= stats[i].total);
   });
 });
 

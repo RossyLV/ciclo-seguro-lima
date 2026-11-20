@@ -1,9 +1,9 @@
-// Interfaz de CicloSeguro Lima (Sprint 3). La lógica de cálculo vive en core.js (probada con tests); aquí solo se dibuja.
+// Interfaz de CicloSeguro Lima. La lógica de cálculo vive en core.js (probada con tests); aquí solo se dibuja.
 import * as api from "./api.js";
 import { CONFIG } from "./config.js";
 import {
   INCIDENT_TYPES, INCIDENT_LABELS, escapeHtml, routeScore, classify, recommendRoutes, recentIncidents,
-  filterByDistrict, validateReport, validateSignup,
+  nearestParkings, averageRating, isValidRating, statsByDistrict, filterByDistrict, validateReport, validateSignup,
 } from "./core.js";
 
 const COLORS = { verde: "#1e9e4a", amarillo: "#e0a800", rojo: "#d63031" };
@@ -15,7 +15,7 @@ const $ = (id) => document.getElementById(id);
 
 const map = L.map("map").setView(LIMA_CENTER, 13);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
-const layers = { routes: L.layerGroup().addTo(map), incidents: L.layerGroup().addTo(map), pick: L.layerGroup().addTo(map) };
+const layers = { routes: L.layerGroup().addTo(map), incidents: L.layerGroup().addTo(map), parkings: L.layerGroup().addTo(map), pick: L.layerGroup().addTo(map) };
 
 // ---------- Utilidades de UI ----------
 function options(select, values, labels = {}, first) {
@@ -45,13 +45,50 @@ function drawIncidents() {
     const div = document.createElement("div");
     div.innerHTML = `<b>${ICONS[i.type]} ${escapeHtml(INCIDENT_LABELS[i.type])}</b><br>${escapeHtml(i.description)}` +
       `<br><small>${new Date(i.created_at).toLocaleDateString("es-PE")} · ${escapeHtml(i.district ?? "")} · ` +
-      `${i.confirmations ?? 0} confirmaciones</small>`;
+      `${i.confirmations ?? 0} confirmaciones</small><br>`;
+    const btn = document.createElement("button");
+    btn.textContent = "Confirmar";
+    btn.onclick = () => onConfirm(i, btn);
+    div.appendChild(btn);
     L.marker([i.lat, i.lng], { icon: L.divIcon({ className: "inc-icon", html: ICONS[i.type], iconSize: [26, 26] }) })
       .bindPopup(div).addTo(layers.incidents);
   }
 }
 
-function redraw() { drawRoutes(); drawIncidents(); }
+function parkingPopup(p) {
+  const avg = averageRating(p.ratings ?? []);
+  const div = document.createElement("div");
+  div.innerHTML = `<b>🅿️ ${escapeHtml(p.name)}</b> (${escapeHtml(p.district)})<br>` +
+    `Vigilancia: ${p.surveillance ? "Sí" : "No"} · Techado: ${p.covered ? "Sí" : "No"}<br>` +
+    `Capacidad: ${Number(p.capacity)} · Tarifa: ${escapeHtml(p.fee)}<br>` +
+    `Calificación: ${avg === null ? "sin calificaciones" : avg + " ★"} (${(p.ratings ?? []).length})<br>`;
+  const sel = document.createElement("select");
+  options(sel, ["5", "4", "3", "2", "1"], { 5: "★★★★★", 4: "★★★★", 3: "★★★", 2: "★★", 1: "★" });
+  const btn = document.createElement("button");
+  btn.textContent = "Calificar";
+  btn.onclick = () => onRate(p, Number(sel.value), btn);
+  div.append(sel, btn);
+  return div;
+}
+
+function drawParkings() {
+  layers.parkings.clearLayers();
+  for (const p of state.parkings) {
+    L.marker([p.lat, p.lng], { icon: L.divIcon({ className: "park-icon", html: "🅿️", iconSize: [24, 24] }) })
+      .bindPopup(() => parkingPopup(p)).addTo(layers.parkings);
+  }
+}
+
+function drawStats() {
+  const rows = statsByDistrict(recentIncidents(state.incidents));
+  $("stats").innerHTML = rows.length === 0 ? "<p>No hay incidentes recientes.</p>" :
+    `<table><thead><tr><th>Distrito</th><th>Total</th>${INCIDENT_TYPES.map((t) => `<th>${ICONS[t]}</th>`).join("")}</tr></thead><tbody>` +
+    rows.map((r) => `<tr><td>${escapeHtml(r.district)}</td><td><b>${r.total}</b></td>` +
+      INCIDENT_TYPES.map((t) => `<td>${r.byType[t] ?? 0}</td>`).join("") + "</tr>").join("") +
+    `</tbody></table><p class="hint">Últimos 30 días. ${INCIDENT_TYPES.map((t) => ICONS[t] + " " + INCIDENT_LABELS[t]).join(" · ")}</p>`;
+}
+
+function redraw() { drawRoutes(); drawIncidents(); drawParkings(); drawStats(); }
 
 // ---------- Acciones ----------
 function onSearch() {
@@ -82,6 +119,36 @@ async function onReport(e) {
     $("report-point").textContent = "Ubicación: sin marcar";
     msg(out, "¡Gracias! Tu reporte fue publicado.", true);
   } catch (err) { msg(out, "No se pudo guardar: " + err.message); }
+}
+
+async function onConfirm(inc, btn) {
+  if (!state.user && api.isOnline) return (btn.textContent = "Inicia sesión");
+  try {
+    await api.confirmIncident(inc.id);
+    inc.confirmations = (inc.confirmations ?? 0) + 1;
+    btn.textContent = "¡Confirmado!";
+    btn.disabled = true;
+    drawRoutes();
+  } catch (err) { btn.textContent = err.message; btn.disabled = true; }
+}
+
+async function onRate(p, stars, btn) {
+  if (!state.user && api.isOnline) return (btn.textContent = "Inicia sesión");
+  if (!isValidRating(stars)) return (btn.textContent = "Valor inválido");
+  try {
+    await api.rateParking(p.id, stars);
+    p.ratings = [...(p.ratings ?? []), stars];
+    btn.textContent = "¡Gracias!";
+    btn.disabled = true;
+  } catch (err) { btn.textContent = err.message; }
+}
+
+function onParkings() {
+  const point = state.point ?? { lat: map.getCenter().lat, lng: map.getCenter().lng };
+  const list = nearestParkings(state.parkings, point, 5);
+  $("parking-results").innerHTML = list.map((p, i) => `<div class="card"><b>${i + 1}. ${escapeHtml(p.name)}</b>` +
+    `<span class="score">${p.distance} m</span><br><small>${p.surveillance ? "Vigilado" : "Sin vigilancia"} · ` +
+    `${p.covered ? "Techado" : "Al aire libre"} · ${escapeHtml(p.fee)}</small></div>`).join("");
 }
 
 // ---------- Autenticación (US-15, US-16) ----------
@@ -138,7 +205,6 @@ async function main() {
     b.hidden = false;
     b.textContent = "Modo demostración: datos de ejemplo, sin base de datos conectada.";
   }
-  document.querySelectorAll(".tab").forEach((t) => (t.hidden = !["rutas", "reportar"].includes(t.dataset.tab)));
   document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
     document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.id !== "tab-" + t.dataset.tab));
@@ -150,6 +216,7 @@ async function main() {
     $("report-point").textContent = `Ubicación: ${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
   });
   $("btn-search").onclick = onSearch;
+  $("btn-parkings").onclick = onParkings;
   $("report-form").addEventListener("submit", onReport);
   $("auth-form").addEventListener("submit", onAuthSubmit);
 
