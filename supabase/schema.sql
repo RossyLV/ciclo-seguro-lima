@@ -88,6 +88,12 @@ create policy "calificar como yo"         on ratings       for insert to authent
 create policy "cambiar mi calificación"   on ratings       for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 -- Rutas, distritos y estacionamientos solo se modifican desde el panel de Supabase (rol service_role).
 
+-- Permisos mínimos para la API (principio de menor privilegio). RLS filtra además fila por fila.
+grant usage on schema public to anon, authenticated;
+grant select on districts, routes, incidents, confirmations, parkings, ratings, incidents_public, parkings_public to anon, authenticated;
+grant insert on incidents, confirmations, ratings to authenticated;
+grant update (parking_id, stars) on ratings to authenticated;
+
 -- ===================== DATOS DE PRUEBA =====================
 insert into districts(name) values
  ('Barranco'),('Jesús María'),('Lima'),('Lince'),('Magdalena'),('Miraflores'),('San Borja'),('San Isidro'),('Santiago de Surco')
