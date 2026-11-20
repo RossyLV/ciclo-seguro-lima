@@ -1,7 +1,7 @@
 // Lógica de negocio de CicloSeguro Lima: funciones puras (sin DOM ni red) para poder probarlas.
 
-
-const DAY_MS = 86_400_000;
+export const LANE_BASE = { segregada: 95, senalizada: 78, compartida: 62 };
+export const CONDITION_PENALTY = { bueno: 0, regular: 8, malo: 20, invadido: 15 };
 
 /** Escapa texto para insertarlo como HTML (evita XSS con descripciones escritas por usuarios). */
 export function escapeHtml(value) {
@@ -39,6 +39,36 @@ export function distanceToPolyline(point, coords) {
 
 export function isValidEmail(email) {
   return typeof email === "string" && email.length <= 254 && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]{2,}$/.test(email.trim());
+}
+
+/** Puntaje de seguridad 0-100 de una ruta según tipo de vía y estado del tramo (US-02).
+ *  Los incidentes se incorporarán en el Sprint 3 (US-08). */
+export function routeScore(route, _incidents = [], _now = new Date()) {
+  const base = LANE_BASE[route.lane_type] ?? 60;
+  const conditionPenalty = CONDITION_PENALTY[route.condition] ?? 0;
+  return Math.max(0, Math.min(100, Math.round(base - conditionPenalty)));
+}
+
+/** Color semáforo según el puntaje. */
+export function classify(score) {
+  if (score >= 75) return "verde";
+  if (score >= 50) return "amarillo";
+  return "rojo";
+}
+
+/** Rutas que conectan origen y destino, ordenadas de más a menos seguras (US-03). */
+export function recommendRoutes(routes, incidents, origin, destination, now = new Date()) {
+  if (!origin || !destination || origin === destination) return [];
+  return routes
+    .filter((r) => r.districts.includes(origin) && r.districts.includes(destination))
+    .map((r) => ({ ...r, score: routeScore(r, incidents, now) }))
+    .map((r) => ({ ...r, level: classify(r.score) }))
+    .sort((a, b) => b.score - a.score);
+}
+
+/** Filtra rutas por distrito (US-05). "" o null devuelve todas. */
+export function filterByDistrict(routes, district) {
+  return district ? routes.filter((r) => r.districts.includes(district)) : routes;
 }
 
 /** Contraseña mínima de 8 caracteres con al menos una letra y un número (US-15). */
