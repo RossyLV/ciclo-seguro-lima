@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CicloSeguro Lima</title>
+  <meta name="description" content="Rutas seguras, reporte de incidentes y estacionamientos para ciclistas en Lima." />
+  <!-- Seguridad: Content-Security-Policy limita de dónde se cargan scripts y a dónde se conecta la app (mitiga XSS). -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' https://unpkg.com https://esm.sh; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https://*.tile.openstreetmap.org https://unpkg.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://esm.sh; object-src 'none'; base-uri 'self'; form-action 'self'" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🚲 CicloSeguro <span>Lima</span></div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="rutas">Rutas</button>
+      <button class="tab" data-tab="reportar">Reportar</button>
+      <button class="tab" data-tab="estacionamientos">Estacionamientos</button>
+      <button class="tab" data-tab="estadisticas">Estadísticas</button>
+    </nav>
+    <div id="auth-bar" class="auth-bar"></div>
+  </header>
+
+  <div id="mode-banner" class="banner" hidden></div>
+
+  <main class="layout">
+    <aside class="panel">
+      <!-- US-03 / US-05 -->
+      <section id="tab-rutas" class="tab-panel">
+        <h2>Ruta más segura</h2>
+        <label>Origen <select id="origin"></select></label>
+        <label>Destino <select id="destination"></select></label>
+        <button id="btn-search" class="primary">Buscar</button>
+        <div id="route-results" class="results"></div>
+        <h3>Filtrar por distrito</h3>
+        <select id="district-filter"></select>
+        <p class="legend"><span class="dot verde"></span>Segura (≥75) <span class="dot amarillo"></span>Precaución (50-74) <span class="dot rojo"></span>Peligrosa (&lt;50)</p>
+      </section>
+
+      <!-- US-06 / US-09 -->
+      <section id="tab-reportar" class="tab-panel" hidden>
+        <h2>Reportar incidente</h2>
+        <p class="hint">1) Haz clic en el mapa para marcar el lugar. 2) Completa el formulario.</p>
+        <form id="report-form" novalidate>
+          <label>Tipo <select id="report-type"></select></label>
+          <label>Distrito <select id="report-district"></select></label>
+          <label>Descripción <textarea id="report-desc" maxlength="300" rows="3" placeholder="¿Qué pasó? (10 a 300 caracteres)"></textarea></label>
+          <p id="report-point" class="hint">Ubicación: sin marcar</p>
+          <button type="submit" class="primary">Enviar reporte</button>
+        </form>
+        <div id="report-msg" class="msg"></div>
+      </section>
+
+      <!-- US-11 / US-12 / US-13 -->
+      <section id="tab-estacionamientos" class="tab-panel" hidden>
+        <h2>Estacionamientos seguros</h2>
+        <p class="hint">Haz clic en el mapa (o usa el centro) y busca los más cercanos.</p>
+        <button id="btn-parkings" class="primary">Estacionamientos cercanos</button>
+        <div id="parking-results" class="results"></div>
+      </section>
+
+      <!-- US-19 -->
+      <section id="tab-estadisticas" class="tab-panel" hidden>
+        <h2>Incidentes por distrito</h2>
+        <div id="stats"></div>
+      </section>
+    </aside>
+    <div id="map" class="map" aria-label="Mapa de ciclovías de Lima"></div>
+  </main>
+
+  <dialog id="auth-dialog">
+    <form id="auth-form" method="dialog" novalidate>
+      <h2 id="auth-title">Ingresar</h2>
+      <label>Correo <input id="auth-email" type="email" autocomplete="email" required /></label>
+      <label>Contraseña <input id="auth-password" type="password" autocomplete="current-password" required /></label>
+      <div id="auth-msg" class="msg"></div>
+      <div class="row">
+        <button id="auth-submit" class="primary" value="ok">Ingresar</button>
+        <button id="auth-cancel" value="cancel" formnovalidate>Cancelar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <footer class="footer">CicloSeguro Lima · versión <span id="version"></span> · Mapa © OpenStreetMap</footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
